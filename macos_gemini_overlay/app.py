@@ -283,9 +283,8 @@ class AppDelegate(NSObject):
             self.current_service = "claude"
             self.gemini_webview.setHidden_(True)
             self.claude_webview.setHidden_(False)
-            # Ensure the Claude webview is brought to the front in the view hierarchy if necessary
-            # This might not be strictly needed if they are sibling views and only one is visible.
-            # self.window.contentView().addSubview_positioned_relativeTo_(self.claude_webview, NSWindowAbove, self.gemini_webview)
+            # Ensure the Claude webview is brought to the front in the view hierarchy
+            self.window.contentView().addSubview_positioned_relativeTo_(self.claude_webview, NSWindowAbove, self.gemini_webview)
             self.updateSwitchMenuItemsState()
             self._focus_prompt_area() # Focus the new active webview
 
@@ -295,7 +294,7 @@ class AppDelegate(NSObject):
             self.claude_webview.setHidden_(True)
             self.gemini_webview.setHidden_(False)
             # Ensure the Gemini webview is brought to the front
-            # self.window.contentView().addSubview_positioned_relativeTo_(self.gemini_webview, NSWindowAbove, self.claude_webview)
+            self.window.contentView().addSubview_positioned_relativeTo_(self.gemini_webview, NSWindowAbove, self.claude_webview)
             self.updateSwitchMenuItemsState()
             self._focus_prompt_area() # Focus the new active webview
 
