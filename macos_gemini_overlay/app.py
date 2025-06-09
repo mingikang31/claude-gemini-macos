@@ -18,7 +18,12 @@ from .constants import (
     LOGO_WHITE_PATH,
     FRAME_SAVE_NAME,
     STATUS_ITEM_CONTEXT,
-    WEBSITE,
+    # WEBSITE,
+    GEMINI_WEBSITE_URL,
+    CLAUDE_WEBSITE_URL,
+    DEFAULT_WEBSITE_URL,
+    MENU_ITEM_SWITCH_TO_CLAUDE,
+    MENU_ITEM_SWITCH_TO_GEMINI,
 )
 from .launcher import (
     install_startup,
@@ -64,6 +69,7 @@ class AppDelegate(NSObject):
     def applicationDidFinishLaunching_(self, notification):
         # Run as accessory app
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        self.current_service = "gemini"
         # Create a borderless, floating, resizable window
         self.window = AppWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(500, 200, 970, 750),
@@ -116,7 +122,7 @@ class AppDelegate(NSObject):
         content_view.addSubview_(self.webview)
         self.webview.setFrame_(NSMakeRect(0, 0, content_bounds.size.width, content_bounds.size.height - DRAG_AREA_HEIGHT))
         # Contact the target website.
-        url = NSURL.URLWithString_(WEBSITE)
+        url = NSURL.URLWithString_(DEFAULT_WEBSITE_URL)
         request = NSURLRequest.requestWithURL_(url)
         self.webview.loadRequest_(request)
         # Set self as navigation delegate to know when page loads
@@ -163,6 +169,17 @@ class AppDelegate(NSObject):
         home_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Home", "goToWebsite:", "g")
         home_item.setTarget_(self)
         menu.addItem_(home_item)
+
+        # Add switch to Claude menu item
+        self.switch_to_claude_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(MENU_ITEM_SWITCH_TO_CLAUDE, "switchToClaude:", "")
+        self.switch_to_claude_item.setTarget_(self)
+        menu.addItem_(self.switch_to_claude_item)
+
+        # Add switch to Gemini menu item
+        self.switch_to_gemini_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(MENU_ITEM_SWITCH_TO_GEMINI, "switchToGemini:", "")
+        self.switch_to_gemini_item.setTarget_(self)
+        menu.addItem_(self.switch_to_gemini_item)
+
         clear_data_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Clear Web Cache", "clearWebViewData:", "")
         clear_data_item.setTarget_(self)
         menu.addItem_(clear_data_item)
@@ -180,6 +197,7 @@ class AppDelegate(NSObject):
         menu.addItem_(quit_item)
         # Set the menu for the status item
         self.status_item.setMenu_(menu)
+        self.updateSwitchMenuItemsState()
         # Add resize observer
         NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
             self, 'windowDidResize:', NSWindowDidResizeNotification, self.window
@@ -225,9 +243,36 @@ class AppDelegate(NSObject):
 
     # Go to the default landing website for the overlay (in case accidentally navigated away).
     def goToWebsite_(self, sender):
-        url = NSURL.URLWithString_(WEBSITE)
+        if self.current_service == "claude":
+            url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+        else:  # gemini
+            url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
         request = NSURLRequest.requestWithURL_(url)
         self.webview.loadRequest_(request)
+
+    def switchToClaude_(self, sender):
+        if self.current_service != "claude":
+            self.current_service = "claude"
+            url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+            request = NSURLRequest.requestWithURL_(url)
+            self.webview.loadRequest_(request)
+            self.updateSwitchMenuItemsState()
+
+    def switchToGemini_(self, sender):
+        if self.current_service != "gemini":
+            self.current_service = "gemini"
+            url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
+            request = NSURLRequest.requestWithURL_(url)
+            self.webview.loadRequest_(request)
+            self.updateSwitchMenuItemsState()
+
+    def updateSwitchMenuItemsState(self):
+        if self.current_service == "claude":
+            self.switch_to_claude_item.setEnabled_(False)
+            self.switch_to_gemini_item.setEnabled_(True)
+        else:  # gemini
+            self.switch_to_claude_item.setEnabled_(True)
+            self.switch_to_gemini_item.setEnabled_(False)
 
     # Clear the webview cache data (in case cookies cause errors).
     def clearWebViewData_(self, sender):
@@ -284,14 +329,36 @@ class AppDelegate(NSObject):
                 self.hideWindow_(None)
             # New Chat (Command+N)
             elif key == 'n':
-                # Try to click Gemini's "New chat" button (falls back to reload)
-                js = """
-                (function(){
-                  const sel = '[aria-label="New chat"], [aria-label="New conversation"], [data-command="new-conversation"]';
-                  const btn = document.querySelector(sel);
-                  if(btn){ btn.click(); } else { location.href='https://gemini.google.com/?referrer=macos-gemini-overlay'; }
-                })();
-                """
+                js = ""
+                if self.current_service == "claude":
+                    js = """
+                    (function(){
+                      const selectors = [
+                        'button[aria-label="Open new chat"]', // Claude
+                        'button[aria-label*="New Chat"]' // Claude (covers variations)
+                      ];
+                      let btnFound = false;
+                      for (const sel of selectors) {
+                        const btn = document.querySelector(sel);
+                        if (btn) {
+                          btn.click();
+                          btnFound = true;
+                          break;
+                        }
+                      }
+                      if (!btnFound) {
+                        location.href = '%s';
+                      }
+                    })();
+                    """ % CLAUDE_WEBSITE_URL
+                else:  # gemini
+                    js = """
+                    (function(){
+                      const sel = '[aria-label="New chat"], [aria-label="New conversation"], [data-command="new-conversation"]';
+                      const btn = document.querySelector(sel);
+                      if(btn){ btn.click(); } else { location.href='%s'; }
+                    })();
+                    """ % GEMINI_WEBSITE_URL
                 self.webview.evaluateJavaScript_completionHandler_(js, None)
             # Toggle Sidebar (Ctrl+Cmd+S)
             elif key == 's' and key_control and key_command:
@@ -409,9 +476,20 @@ class AppDelegate(NSObject):
     def _focus_prompt_area(self):
         js_focus = """
         (function(){
-          const sel='[aria-label=\\"Enter a prompt here\\"], [data-placeholder=\\"Ask Gemini\\"]';
-          const el=document.querySelector(sel) || document.querySelector('textarea');
-          if(el){ el.focus(); }
+          const selectors = [
+            '[aria-label="Enter a prompt here"]', // Gemini
+            '[data-placeholder="Ask Gemini"]', // Gemini
+            '[data-placeholder="Message Claude"]', // Claude
+            '[data-placeholder^="Send a message"]', // Claude (covers variations)
+            'textarea' // Generic fallback
+          ];
+          for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el) {
+              el.focus();
+              break;
+            }
+          }
         })();
         """
         self.webview.evaluateJavaScript_completionHandler_(js_focus, None)
