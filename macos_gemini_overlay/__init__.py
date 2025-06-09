@@ -1,5 +1,5 @@
 """
-macOS Gemini Overlay - A macOS overlay app for Google Gemini.
+macOS Claude Overlay - A macOS overlay app for Anthropic Claude.
 """
 
 import os
@@ -13,7 +13,7 @@ with open(os.path.join(ABOUT_DIR,"author.txt")) as f:
 __all__ = ["main"]
 
 # Lazily import the real CLI entry‐point to avoid importing it twice when
-# executing with "python -m macos_gemini_overlay.main" (runpy will import the
+# executing with "python -m macos_claude_overlay.main" (runpy will import the
 # module after the package has already been initialised).
 
 def main(*args, **kwargs):  # noqa: D401 – simple wrapper

@@ -284,12 +284,12 @@ class AppDelegate(NSObject):
                 self.hideWindow_(None)
             # New Chat (Command+N)
             elif key == 'n':
-                # Try to click Gemini's "New chat" button (falls back to reload)
+                # Try to click Claude's "New chat" button (falls back to reload)
                 js = """
                 (function(){
                   const sel = '[aria-label="New chat"], [aria-label="New conversation"], [data-command="new-conversation"]';
                   const btn = document.querySelector(sel);
-                  if(btn){ btn.click(); } else { location.href='https://gemini.google.com/?referrer=macos-gemini-overlay'; }
+                  if(btn){ btn.click(); } else { location.href='https://claude.ai/new?referrer=macos-claude-overlay'; }
                 })();
                 """
                 self.webview.evaluateJavaScript_completionHandler_(js, None)
@@ -404,12 +404,12 @@ class AppDelegate(NSObject):
     def _focusPromptTimerFired_(self, timer):
         self._focus_prompt_area()
 
-    # Python method to call JS that focuses the Gemini textarea / prompt
+    # Python method to call JS that focuses the Claude textarea / prompt
     @objc.python_method
     def _focus_prompt_area(self):
         js_focus = """
         (function(){
-          const sel='[aria-label=\\"Enter a prompt here\\"], [data-placeholder=\\"Ask Gemini\\"]';
+          const sel='[aria-label="Enter a prompt here"], [data-placeholder="Message Claude"]';
           const el=document.querySelector(sel) || document.querySelector('textarea');
           if(el){ el.focus(); }
         })();

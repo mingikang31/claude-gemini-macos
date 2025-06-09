@@ -1,4 +1,3 @@
-
 # Apple libraries
 from Quartz import (
     kCGEventFlagMaskAlternate,
@@ -8,11 +7,11 @@ from Quartz import (
 )
 
 
-WEBSITE = "https://gemini.google.com?referrer=macos-gemini-overlay"
-LOGO_WHITE_PATH = "logo/logo_white.png"
-LOGO_BLACK_PATH = "logo/logo_black.png"
-FRAME_SAVE_NAME = "GeminiWindowFrame"
-APP_TITLE = "Gemini"
+WEBSITE = "https://claude.ai/new?referrer=macos-claude-overlay"
+LOGO_WHITE_PATH = "logo/claude_logo_white.png"
+LOGO_BLACK_PATH = "logo/claude_logo_black.png"
+FRAME_SAVE_NAME = "ClaudeWindowFrame"
+APP_TITLE = "Claude"
 PERMISSION_CHECK_EXIT = 1
 CORNER_RADIUS = 15.0
 DRAG_AREA_HEIGHT = 30

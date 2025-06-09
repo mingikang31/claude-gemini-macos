@@ -21,7 +21,7 @@ def read(f_name, empty_lines=False):
     return text
 
 # Go to the "about" directory in the package directory.
-source_page = "gemini"
+source_page = "claude"
 package_name = f"macos-{source_page}-overlay"
 package_about = os.path.join(os.path.dirname(os.path.abspath(__file__)), package_name.replace("-","_"), "about")
 

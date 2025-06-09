@@ -12,7 +12,7 @@ from pathlib import Path
 # Get a path for logging errors that is persistent.
 def get_log_dir():
     # Set a persistent log directory in the user's home folder
-    log_dir = Path.home() / "Library" / "Logs" / "macos-gemini-overlay"
+    log_dir = Path.home() / "Library" / "Logs" / "macos-claude-overlay"
     # Create the directory if it doesn't exist
     log_dir.mkdir(parents=True, exist_ok=True)
     # Return a persistent path name (same file for error logs).
@@ -21,8 +21,8 @@ def get_log_dir():
 
 # Settings for crash loop detection.
 LOG_DIR = get_log_dir()
-LOG_PATH = LOG_DIR / "macos_gemini_overlay_error_log.txt"
-CRASH_COUNTER_FILE = LOG_DIR / "macos_gemini_overlay_crash_counter.txt"
+LOG_PATH = LOG_DIR / "macos_claude_overlay_error_log.txt"
+CRASH_COUNTER_FILE = LOG_DIR / "macos_claude_overlay_crash_counter.txt"
 CRASH_THRESHOLD = 3    # Maximum allowed crashes within the time window.
 CRASH_TIME_WINDOW = 60 # Time window in seconds.
 
