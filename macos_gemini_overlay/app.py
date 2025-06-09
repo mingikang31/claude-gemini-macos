@@ -65,6 +65,43 @@ class DragArea(NSView):
 
 # The main delegate for running the overlay app.
 class AppDelegate(NSObject):
+    @objc.python_method
+    def _create_configured_webview(self, frame_rect):
+        config = WKWebViewConfiguration.alloc().init()
+        config.preferences().setJavaScriptCanOpenWindowsAutomatically_(True)
+
+        # Setup for background color script message handler
+        user_content_controller = config.userContentController()
+        user_content_controller.addScriptMessageHandler_name_(self, "backgroundColorHandler")
+
+        # Inject JavaScript to monitor background color changes (same as existing)
+        script = """
+            function sendBackgroundColor() {
+                var bgColor = window.getComputedStyle(document.body).backgroundColor;
+                window.webkit.messageHandlers.backgroundColorHandler.postMessage(bgColor);
+            }
+            window.addEventListener('load', sendBackgroundColor);
+            new MutationObserver(sendBackgroundColor).observe(document.body, { attributes: true, attributeFilter: ['style'] });
+        """
+        user_script = WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(script, WKUserScriptInjectionTimeAtDocumentEnd, True)
+        user_content_controller.addUserScript_(user_script)
+
+        webview = WKWebView.alloc().initWithFrame_configuration_(frame_rect, config)
+        webview.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+
+        safari_user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        webview.setCustomUserAgent_(safari_user_agent)
+        webview.setNavigationDelegate_(self)
+        return webview
+
+    @property
+    @objc.python_method
+    def active_webview(self):
+        if self.current_service == "claude":
+            return self.claude_webview
+        else:
+            return self.gemini_webview
+
     # The main application setup.
     def applicationDidFinishLaunching_(self, notification):
         # Run as accessory app
@@ -84,18 +121,6 @@ class AppDelegate(NSObject):
         )
         # Save the last position and size
         self.window.setFrameAutosaveName_(FRAME_SAVE_NAME)
-        # Create the webview for the main application.
-        config = WKWebViewConfiguration.alloc().init()
-        config.preferences().setJavaScriptCanOpenWindowsAutomatically_(True)
-        # Initialize the WebView with a frame
-        self.webview = WKWebView.alloc().initWithFrame_configuration_(
-            ((0, 0), (970, 750)),  # Frame: origin (0,0), size (970x750)
-            config
-        )
-        self.webview.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)  # Resizes with window
-        # Set a custom user agent
-        safari_user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-        self.webview.setCustomUserAgent_(safari_user_agent)
         # Make window transparent so that the corners can be rounded
         self.window.setOpaque_(False)
         self.window.setBackgroundColor_(NSColor.clearColor())
@@ -105,6 +130,21 @@ class AppDelegate(NSObject):
         content_view.layer().setCornerRadius_(CORNER_RADIUS)
         content_view.layer().setBackgroundColor_(NSColor.whiteColor().CGColor())
         self.window.setContentView_(content_view)
+
+        initial_webview_frame = ((0, 0), (content_view.bounds().size.width, content_view.bounds().size.height - DRAG_AREA_HEIGHT))
+
+        self.gemini_webview = self._create_configured_webview(initial_webview_frame)
+        self.claude_webview = self._create_configured_webview(initial_webview_frame)
+
+        # Load initial content
+        gemini_url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
+        gemini_request = NSURLRequest.requestWithURL_(gemini_url)
+        self.gemini_webview.loadRequest_(gemini_request)
+
+        claude_url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+        claude_request = NSURLRequest.requestWithURL_(claude_url)
+        self.claude_webview.loadRequest_(claude_request)
+
         # Set up drag area (top sliver, full width)
         content_bounds = content_view.bounds()
         self.drag_area = DragArea.alloc().initWithFrame_(
@@ -118,30 +158,18 @@ class AppDelegate(NSObject):
         close_button.setTarget_(self)
         close_button.setAction_("hideWindow:")
         self.drag_area.addSubview_(close_button)
+
+        # Add both webviews to the content view. Gemini is initially visible.
+        content_view.addSubview_(self.claude_webview)
+        content_view.addSubview_(self.gemini_webview) # Gemini on top / visible
+
+        self.claude_webview.setHidden_(True) # Claude starts hidden
+
         # Update the webview sizing and insert it below drag area.
-        content_view.addSubview_(self.webview)
-        self.webview.setFrame_(NSMakeRect(0, 0, content_bounds.size.width, content_bounds.size.height - DRAG_AREA_HEIGHT))
-        # Contact the target website.
-        url = NSURL.URLWithString_(DEFAULT_WEBSITE_URL)
-        request = NSURLRequest.requestWithURL_(url)
-        self.webview.loadRequest_(request)
-        # Set self as navigation delegate to know when page loads
-        self.webview.setNavigationDelegate_(self)
-        # Set up script message handler for background color changes
-        configuration = self.webview.configuration()
-        user_content_controller = configuration.userContentController()
-        user_content_controller.addScriptMessageHandler_name_(self, "backgroundColorHandler")
-        # Inject JavaScript to monitor background color changes
-        script = """
-            function sendBackgroundColor() {
-                var bgColor = window.getComputedStyle(document.body).backgroundColor;
-                window.webkit.messageHandlers.backgroundColorHandler.postMessage(bgColor);
-            }
-            window.addEventListener('load', sendBackgroundColor);
-            new MutationObserver(sendBackgroundColor).observe(document.body, { attributes: true, attributeFilter: ['style'] });
-        """
-        user_script = WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(script, WKUserScriptInjectionTimeAtDocumentEnd, True)
-        user_content_controller.addUserScript_(user_script)
+        webview_frame = NSMakeRect(0, 0, content_bounds.size.width, content_bounds.size.height - DRAG_AREA_HEIGHT)
+        self.gemini_webview.setFrame_(webview_frame)
+        self.claude_webview.setFrame_(webview_frame)
+
         # Create status bar item with logo
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSSquareStatusItemLength)
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -248,23 +276,28 @@ class AppDelegate(NSObject):
         else:  # gemini
             url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
         request = NSURLRequest.requestWithURL_(url)
-        self.webview.loadRequest_(request)
+        self.active_webview.loadRequest_(request)
 
     def switchToClaude_(self, sender):
         if self.current_service != "claude":
             self.current_service = "claude"
-            url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
-            request = NSURLRequest.requestWithURL_(url)
-            self.webview.loadRequest_(request)
+            self.gemini_webview.setHidden_(True)
+            self.claude_webview.setHidden_(False)
+            # Ensure the Claude webview is brought to the front in the view hierarchy if necessary
+            # This might not be strictly needed if they are sibling views and only one is visible.
+            # self.window.contentView().addSubview_positioned_relativeTo_(self.claude_webview, NSWindowAbove, self.gemini_webview)
             self.updateSwitchMenuItemsState()
+            self._focus_prompt_area() # Focus the new active webview
 
     def switchToGemini_(self, sender):
         if self.current_service != "gemini":
             self.current_service = "gemini"
-            url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
-            request = NSURLRequest.requestWithURL_(url)
-            self.webview.loadRequest_(request)
+            self.claude_webview.setHidden_(True)
+            self.gemini_webview.setHidden_(False)
+            # Ensure the Gemini webview is brought to the front
+            # self.window.contentView().addSubview_positioned_relativeTo_(self.gemini_webview, NSWindowAbove, self.claude_webview)
             self.updateSwitchMenuItemsState()
+            self._focus_prompt_area() # Focus the new active webview
 
     def updateSwitchMenuItemsState(self):
         if self.current_service == "claude":
@@ -276,7 +309,7 @@ class AppDelegate(NSObject):
 
     # Clear the webview cache data (in case cookies cause errors).
     def clearWebViewData_(self, sender):
-        dataStore = self.webview.configuration().websiteDataStore()
+        dataStore = self.active_webview.configuration().websiteDataStore()
         dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
         dataStore.removeDataOfTypes_modifiedSince_completionHandler_(
             dataTypes,
@@ -310,6 +343,15 @@ class AppDelegate(NSObject):
         key_shift = modifiers & NSShiftKeyMask
         key_control = modifiers & NSControlKeyMask
         key = event.charactersIgnoringModifiers()
+
+        # Option + C to switch services
+        if key_alt and (not key_command) and (not key_control) and (not key_shift) and key.lower() == 'c':
+            if self.current_service == "gemini":
+                self.switchToClaude_(None)
+            else:
+                self.switchToGemini_(None)
+            return # Consume the event
+
         # Command (NOT alt)
         if (key_command or key_control) and (not key_alt):
             # Select all
@@ -359,7 +401,7 @@ class AppDelegate(NSObject):
                       if(btn){ btn.click(); } else { location.href='%s'; }
                     })();
                     """ % GEMINI_WEBSITE_URL
-                self.webview.evaluateJavaScript_completionHandler_(js, None)
+                self.active_webview.evaluateJavaScript_completionHandler_(js, None)
             # Toggle Sidebar (Ctrl+Cmd+S)
             elif key == 's' and key_control and key_command:
                 js = """
@@ -373,7 +415,7 @@ class AppDelegate(NSObject):
                   if(btn){ btn.click(); }
                 })();
                 """
-                self.webview.evaluateJavaScript_completionHandler_(js, None)
+                self.active_webview.evaluateJavaScript_completionHandler_(js, None)
             # Quit
             elif key == 'q':
                 NSApp.terminate_(None)
@@ -402,7 +444,7 @@ class AppDelegate(NSObject):
                   }
                 })();
                 """
-                self.webview.evaluateJavaScript_completionHandler_(js, None)
+                self.active_webview.evaluateJavaScript_completionHandler_(js, None)
             # # Undo (causes crash for some reason)
             # elif key == 'z':
             #     self.window.firstResponder().undo_(None)
@@ -429,7 +471,9 @@ class AppDelegate(NSObject):
         bounds = self.window.contentView().bounds()
         w, h = bounds.size.width, bounds.size.height
         self.drag_area.setFrame_(NSMakeRect(0, h - DRAG_AREA_HEIGHT, w, DRAG_AREA_HEIGHT))
-        self.webview.setFrame_(NSMakeRect(0, 0, w, h - DRAG_AREA_HEIGHT))
+        webview_new_frame = NSMakeRect(0, 0, w, h - DRAG_AREA_HEIGHT)
+        self.gemini_webview.setFrame_(webview_new_frame)
+        self.claude_webview.setFrame_(webview_new_frame)
 
     # Handler for setting the background color based on the web page background color.
     def userContentController_didReceiveScriptMessage_(self, userContentController, message):
@@ -492,4 +536,4 @@ class AppDelegate(NSObject):
           }
         })();
         """
-        self.webview.evaluateJavaScript_completionHandler_(js_focus, None)
+        self.active_webview.evaluateJavaScript_completionHandler_(js_focus, None)
