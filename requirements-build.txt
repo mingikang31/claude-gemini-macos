@@ -1,0 +1,7 @@
+# Build requirements for AI Assistant macOS app
+py2app>=0.28
+setuptools>=45.0.0
+wheel>=0.36.0
+pyobjc-framework-Cocoa>=9.0
+pyobjc-framework-WebKit>=9.0
+pyobjc-framework-Quartz>=9.0

@@ -24,10 +24,10 @@ def get_executable():
         app_path = sys.argv[0]
         while not app_path.endswith(".app"):
             app_path = os.path.dirname(app_path)
-        executable = os.path.join(app_path, "Contents", "MacOS", f"macos-{APP_TITLE.lower()}-overlay")
+        executable = os.path.join(app_path, "Contents", "MacOS", f"macos-ai-assistant-overlay")
         program_args = [executable]
     else:  # Running from pip installation
-        program_args = [sys.executable, "-m", f"macos_{APP_TITLE.lower()}_overlay"]
+        program_args = [sys.executable, "-m", f"macos_ai_assistant_overlay"]
     return program_args
 
 # Install the app as a startup application using a Launch Agent.
@@ -37,14 +37,14 @@ def install_startup():
     program_args = get_executable()
     # Define the PLIST data..
     plist = {
-        "Label": f"com.{username}.macos{APP_TITLE.lower()}overlay",
+        "Label": f"com.{username}.macosaiassistantoverlay",
         "ProgramArguments": program_args,
         "RunAtLoad": True,
         "KeepAlive": True,  # Will be restarted automatically on failure.
     }
     launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
     launch_agents_dir.mkdir(parents=True, exist_ok=True)
-    plist_path = launch_agents_dir / f"com.{username}.macos{APP_TITLE.lower()}overlay.plist"
+    plist_path = launch_agents_dir / f"com.{username}.macosaiassistantoverlay.plist"
     with open(plist_path, "wb") as f:
         plistlib.dump(plist, f)
     result = os.system(f"launchctl load {plist_path}")
@@ -53,14 +53,14 @@ def install_startup():
         return False
     else:
         print(f"Installed as startup app. Launch Agent created at {plist_path}.")
-        print(f"To disable, run: macos-{APP_TITLE.lower()}-overlay --uninstall-startup")
+        print(f"To disable, run: macos-ai-assistant-overlay --uninstall-startup")
         return True
 
 # Uninstall the app from running at login.
 def uninstall_startup():
     username = getpass.getuser()
     launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
-    plist_path = launch_agents_dir / f"com.{username}.macos{APP_TITLE.lower()}overlay.plist"
+    plist_path = launch_agents_dir / f"com.{username}.macosaiassistantoverlay.plist"
     if plist_path.exists():
         try:
             os.system(f"launchctl unload {plist_path}")

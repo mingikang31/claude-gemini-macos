@@ -27,7 +27,7 @@ from .health_checks import (
 # Main executable for running the application from the command line.
 @health_check_decorator
 def main():
-    parser = argparse.ArgumentParser(description=f"macOS {APP_TITLE} Overlay App - Dedicated window that can be summoned and dismissed with the keyboard command Option+Space.")
+    parser = argparse.ArgumentParser(description=f"macOS {APP_TITLE} Overlay App - Dedicated window for Claude and Gemini that can be summoned and dismissed with the keyboard command Option+Space.")
     parser.add_argument(
         "--install-startup",
         action="store_true",
@@ -65,10 +65,10 @@ def main():
 
     # Default behavior: run the app and inform user of startup options
     print()
-    print(f"Starting macos-{APP_TITLE.lower()}-overlay.")
+    print(f"Starting macos-ai-assistant-overlay.")
     print()
-    print(f"To run at login, use:      macos-{APP_TITLE.lower()}-overlay --install-startup")
-    print(f"To remove from login, use: macos-{APP_TITLE.lower()}-overlay --uninstall-startup")
+    print(f"To run at login, use:      macos-ai-assistant-overlay --install-startup")
+    print(f"To remove from login, use: macos-ai-assistant-overlay --uninstall-startup")
     print()
     app = NSApplication.sharedApplication()
     delegate = AppDelegate.alloc().init()

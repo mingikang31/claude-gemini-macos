@@ -99,3 +99,6 @@ python3 -m unittest discover
   This project was forked from [macos-grok-overlay](https://github.com/tchlux/macos-grok-overlay) and modified to work with Google Gemini. All credits go to the original author.
 
   This was a small fun weekend project, and is not a product of Google Gemini, xAI team nor is it formally affiliated with them.
+
+
+  

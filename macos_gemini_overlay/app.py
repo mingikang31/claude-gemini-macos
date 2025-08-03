@@ -63,7 +63,8 @@ class DragArea(NSView):
         self.window().performWindowDragWithEvent_(event)
 
 
-# The main delegate for running the overlay app.
+# The main delegate for running the dual-service AI overlay app.
+# Manages switching between Claude and Gemini webviews while maintaining state.
 class AppDelegate(NSObject):
     @objc.python_method
     def _create_configured_webview(self, frame_rect):
@@ -74,14 +75,52 @@ class AppDelegate(NSObject):
         user_content_controller = config.userContentController()
         user_content_controller.addScriptMessageHandler_name_(self, "backgroundColorHandler")
 
-        # Inject JavaScript to monitor background color changes (same as existing)
+        # Inject JavaScript to monitor background color changes and reduce font size
         script = """
             function sendBackgroundColor() {
                 var bgColor = window.getComputedStyle(document.body).backgroundColor;
                 window.webkit.messageHandlers.backgroundColorHandler.postMessage(bgColor);
             }
-            window.addEventListener('load', sendBackgroundColor);
-            new MutationObserver(sendBackgroundColor).observe(document.body, { attributes: true, attributeFilter: ['style'] });
+            
+            function applyZoomReduction() {
+                // Create or update zoom style
+                var zoomStyle = document.getElementById('ai-assistant-zoom');
+                if (!zoomStyle) {
+                    zoomStyle = document.createElement('style');
+                    zoomStyle.id = 'ai-assistant-zoom';
+                    document.head.appendChild(zoomStyle);
+                }
+                
+                // Apply 85% zoom to make content smaller (similar to browser zoom)
+                zoomStyle.textContent = `
+                    body {
+                        zoom: 0.85 !important;
+                        transform-origin: top left !important;
+                    }
+                    
+                    /* Fallback for browsers that don't support zoom */
+                    @supports not (zoom: 0.85) {
+                        body {
+                            transform: scale(0.85) !important;
+                            transform-origin: top left !important;
+                            width: 117.65% !important; /* 100/0.85 to compensate for scaling */
+                            height: 117.65% !important;
+                        }
+                    }
+                `;
+            }
+            
+            window.addEventListener('load', function() {
+                sendBackgroundColor();
+                applyZoomReduction();
+            });
+            
+            // Apply zoom reduction immediately and on DOM changes
+            applyZoomReduction();
+            new MutationObserver(function() {
+                sendBackgroundColor();
+                applyZoomReduction();
+            }).observe(document.body, { attributes: true, attributeFilter: ['style'] });
         """
         user_script = WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(script, WKUserScriptInjectionTimeAtDocumentEnd, True)
         user_content_controller.addUserScript_(user_script)
@@ -107,6 +146,8 @@ class AppDelegate(NSObject):
         # Run as accessory app
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self.current_service = "gemini"
+        self.switching_in_progress = False
+        self.switch_indicator = None
         # Create a borderless, floating, resizable window
         self.window = AppWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(500, 200, 970, 750),
@@ -158,10 +199,21 @@ class AppDelegate(NSObject):
         close_button.setTarget_(self)
         close_button.setAction_("hideWindow:")
         self.drag_area.addSubview_(close_button)
+        
+        # Add service indicator label to show current service
+        self.service_label = NSTextField.alloc().initWithFrame_(NSMakeRect(30, 5, 100, 20))
+        self.service_label.setStringValue_("Gemini")
+        self.service_label.setBezeled_(False)
+        self.service_label.setDrawsBackground_(False)
+        self.service_label.setEditable_(False)
+        self.service_label.setSelectable_(False)
+        self.service_label.setFont_(NSFont.boldSystemFontOfSize_(12))
+        self.service_label.setTextColor_(NSColor.labelColor())
+        self.drag_area.addSubview_(self.service_label)
 
-        # Add both webviews to the content view. Gemini is initially visible.
+        # Add both webviews to the content view. Gemini is the default active service.
         content_view.addSubview_(self.claude_webview)
-        content_view.addSubview_(self.gemini_webview) # Gemini on top / visible
+        content_view.addSubview_(self.gemini_webview) # Gemini starts as the active service
 
         self.claude_webview.setHidden_(True) # Claude starts hidden
 
@@ -279,42 +331,117 @@ class AppDelegate(NSObject):
         self.active_webview.loadRequest_(request)
 
     def switchToClaude_(self, sender):
-        if self.current_service != "claude":
+        if self.switching_in_progress or self.current_service == "claude":
+            return
+        
+        self.switching_in_progress = True
+        self._showSwitchIndicator("Switching to Claude...")
+        
+        try:
             self.current_service = "claude"
-            self.gemini_webview.setHidden_(True)
+            
+            # Animate the transition with cross-fade effect
+            self.claude_webview.setAlphaValue_(0.0)
             self.claude_webview.setHidden_(False)
+            
             # Ensure the Claude webview is brought to the front in the view hierarchy
             self.window.contentView().addSubview_positioned_relativeTo_(self.claude_webview, NSWindowAbove, self.gemini_webview)
+            
+            # Animate fade-in for Claude and fade-out for Gemini
+            def animation_group(context):
+                context.setDuration_(0.2)
+                self.claude_webview.animator().setAlphaValue_(1.0)
+                self.gemini_webview.animator().setAlphaValue_(0.0)
+            
+            def completion_handler():
+                if self.gemini_webview:
+                    self.gemini_webview.setHidden_(True)
+                    self.gemini_webview.setAlphaValue_(1.0)  # Reset for next transition
+            
+            NSAnimationContext.runAnimationGroup_completionHandler_(
+                animation_group,
+                completion_handler
+            )
+            
             self.updateSwitchMenuItemsState()
-            self._focus_prompt_area() # Focus the new active webview
+            # Use timer for delayed focus to ensure webview is ready
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.3, self, '_switchCompleteTimerFired:', None, False)
+        except Exception as e:
+            print(f"Error switching to Claude: {e}")
+            self._hideSwitchIndicator()
+            self.switching_in_progress = False
 
     def switchToGemini_(self, sender):
-        if self.current_service != "gemini":
+        if self.switching_in_progress or self.current_service == "gemini":
+            return
+        
+        self.switching_in_progress = True
+        self._showSwitchIndicator("Switching to Gemini...")
+        
+        try:
             self.current_service = "gemini"
-            self.claude_webview.setHidden_(True)
+            
+            # Animate the transition with cross-fade effect
+            self.gemini_webview.setAlphaValue_(0.0)
             self.gemini_webview.setHidden_(False)
+            
             # Ensure the Gemini webview is brought to the front
             self.window.contentView().addSubview_positioned_relativeTo_(self.gemini_webview, NSWindowAbove, self.claude_webview)
+            
+            # Animate fade-in for Gemini and fade-out for Claude
+            def animation_group(context):
+                context.setDuration_(0.2)
+                self.gemini_webview.animator().setAlphaValue_(1.0)
+                self.claude_webview.animator().setAlphaValue_(0.0)
+            
+            def completion_handler():
+                if self.claude_webview:
+                    self.claude_webview.setHidden_(True)
+                    self.claude_webview.setAlphaValue_(1.0)  # Reset for next transition
+            
+            NSAnimationContext.runAnimationGroup_completionHandler_(
+                animation_group,
+                completion_handler
+            )
+            
             self.updateSwitchMenuItemsState()
-            self._focus_prompt_area() # Focus the new active webview
+            # Use timer for delayed focus to ensure webview is ready
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.3, self, '_switchCompleteTimerFired:', None, False)
+        except Exception as e:
+            print(f"Error switching to Gemini: {e}")
+            self._hideSwitchIndicator()
+            self.switching_in_progress = False
 
     def updateSwitchMenuItemsState(self):
         if self.current_service == "claude":
             self.switch_to_claude_item.setEnabled_(False)
             self.switch_to_gemini_item.setEnabled_(True)
+            self.service_label.setStringValue_("Claude")
         else:  # gemini
             self.switch_to_claude_item.setEnabled_(True)
             self.switch_to_gemini_item.setEnabled_(False)
+            self.service_label.setStringValue_("Gemini")
 
     # Clear the webview cache data (in case cookies cause errors).
     def clearWebViewData_(self, sender):
-        dataStore = self.active_webview.configuration().websiteDataStore()
-        dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
-        dataStore.removeDataOfTypes_modifiedSince_completionHandler_(
-            dataTypes,
-            NSDate.distantPast(),
-            lambda: print("Data cleared")
-        )
+        try:
+            dataStore = self.active_webview.configuration().websiteDataStore()
+            dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+            
+            def completion_handler():
+                print("Web cache data cleared successfully")
+                self._showNotification("Cache cleared", "Web data has been cleared")
+            
+            dataStore.removeDataOfTypes_modifiedSince_completionHandler_(
+                dataTypes,
+                NSDate.distantPast(),
+                completion_handler
+            )
+        except Exception as e:
+            print(f"Error clearing web data: {e}")
+            self._showNotification("Error", "Failed to clear web cache")
 
     # Go to the default landing website for the overlay (in case accidentally navigated away).
     def install_(self, sender):
@@ -374,47 +501,84 @@ class AppDelegate(NSObject):
                 if self.current_service == "claude":
                     js = """
                     (function(){
-                      const selectors = [
-                        'button[aria-label="Open new chat"]', // Claude
-                        'button[aria-label*="New Chat"]' // Claude (covers variations)
-                      ];
-                      let btnFound = false;
-                      for (const sel of selectors) {
-                        const btn = document.querySelector(sel);
-                        if (btn) {
-                          btn.click();
-                          btnFound = true;
-                          break;
+                      try {
+                        const selectors = [
+                          'button[aria-label="Open new chat"]', // Claude
+                          'button[aria-label*="New Chat"]' // Claude (covers variations)
+                        ];
+                        let btnFound = false;
+                        for (const sel of selectors) {
+                          const btn = document.querySelector(sel);
+                          if (btn) {
+                            btn.click();
+                            btnFound = true;
+                            break;
+                          }
                         }
-                      }
-                      if (!btnFound) {
-                        location.href = '%s';
+                        if (!btnFound) {
+                          location.href = '%s';
+                        }
+                        return 'success';
+                      } catch (error) {
+                        return 'error: ' + error.message;
                       }
                     })();
                     """ % CLAUDE_WEBSITE_URL
                 else:  # gemini
                     js = """
                     (function(){
-                      const sel = '[aria-label="New chat"], [aria-label="New conversation"], [data-command="new-conversation"]';
-                      const btn = document.querySelector(sel);
-                      if(btn){ btn.click(); } else { location.href='%s'; }
+                      try {
+                        const sel = '[aria-label="New chat"], [aria-label="New conversation"], [data-command="new-conversation"]';
+                        const btn = document.querySelector(sel);
+                        if(btn){ 
+                          btn.click(); 
+                          return 'success';
+                        } else { 
+                          location.href='%s'; 
+                          return 'redirect';
+                        }
+                      } catch (error) {
+                        return 'error: ' + error.message;
+                      }
                     })();
                     """ % GEMINI_WEBSITE_URL
-                self.active_webview.evaluateJavaScript_completionHandler_(js, None)
+                
+                def new_chat_completion_handler(result, error):
+                    if error:
+                        print(f"JavaScript error in new chat command: {error}")
+                    elif result and result.startswith('error:'):
+                        print(f"New chat script error: {result}")
+                
+                self.active_webview.evaluateJavaScript_completionHandler_(js, new_chat_completion_handler)
             # Toggle Sidebar (Ctrl+Cmd+S)
             elif key == 's' and key_control and key_command:
                 js = """
                 (function(){
-                  const selectors=[
-                    '[aria-label="Main menu"]',
-                    '[data-test-id="side-nav-menu-button"]'
-                  ];
-                  let btn=null;
-                  for(const sel of selectors){ btn=document.querySelector(sel); if(btn) break; }
-                  if(btn){ btn.click(); }
+                  try {
+                    const selectors=[
+                      '[aria-label="Main menu"]',
+                      '[data-test-id="side-nav-menu-button"]'
+                    ];
+                    let btn=null;
+                    for(const sel of selectors){ btn=document.querySelector(sel); if(btn) break; }
+                    if(btn){ 
+                      btn.click(); 
+                      return 'success';
+                    }
+                    return 'no_button_found';
+                  } catch (error) {
+                    return 'error: ' + error.message;
+                  }
                 })();
                 """
-                self.active_webview.evaluateJavaScript_completionHandler_(js, None)
+                
+                def sidebar_completion_handler(result, error):
+                    if error:
+                        print(f"JavaScript error in sidebar toggle: {error}")
+                    elif result and result.startswith('error:'):
+                        print(f"Sidebar toggle script error: {result}")
+                
+                self.active_webview.evaluateJavaScript_completionHandler_(js, sidebar_completion_handler)
             # Quit
             elif key == 'q':
                 NSApp.terminate_(None)
@@ -444,9 +608,16 @@ class AppDelegate(NSObject):
                 })();
                 """
                 self.active_webview.evaluateJavaScript_completionHandler_(js, None)
-            # # Undo (causes crash for some reason)
-            # elif key == 'z':
-            #     self.window.firstResponder().undo_(None)
+            # Undo - implemented safely via JavaScript
+            elif key == 'z':
+                js_undo = """
+                (function(){
+                  if (document.activeElement && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT' || document.activeElement.contentEditable === 'true')) {
+                    document.execCommand('undo');
+                  }
+                })();
+                """
+                self.active_webview.evaluateJavaScript_completionHandler_(js_undo, None)
 
     # Handler for capturing a click-and-drag event when not already the key window.
     @objc.python_method
@@ -503,36 +674,226 @@ class AppDelegate(NSObject):
         # Update the logo image when the system appearance changes
         self.updateStatusItemImage()
 
-    # WKNavigationDelegate – called when navigation finishes
+    # WKNavigationDelegate – called when navigation finishes successfully
     def webView_didFinishNavigation_(self, webview, navigation):
         # Page loaded, focus prompt area after small delay to ensure textarea exists
         # Delay 0.1 s, then focus prompt (use NSTimer – PyObjC provides selector call)
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.1, self, '_focusPromptTimerFired:', None, False)
+    
+    # WKNavigationDelegate – called when navigation fails
+    def webView_didFailNavigation_withError_(self, webview, navigation, error):
+        print(f"Navigation failed: {error.localizedDescription()}")
+        # Try to reload after a delay if it's a network error
+        if "NSURLErrorDomain" in str(error):
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                5.0, self, '_retryNavigationTimerFired:', webview, False)
+    
+    # WKNavigationDelegate – called when provisional navigation fails
+    def webView_didFailProvisionalNavigation_withError_(self, webview, navigation, error):
+        print(f"Provisional navigation failed: {error.localizedDescription()}")
+        # Try to reload after a delay if it's a network error
+        if "NSURLErrorDomain" in str(error):
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                5.0, self, '_retryNavigationTimerFired:', webview, False)
+    
+    # Helper to retry navigation after network errors
+    def _retryNavigationTimerFired_(self, timer):
+        webview = timer.userInfo()
+        if webview == self.claude_webview:
+            url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+        else:
+            url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
+        request = NSURLRequest.requestWithURL_(url)
+        webview.loadRequest_(request)
+        print("Retrying navigation...")
 
     # Helper called by timer
     def _focusPromptTimerFired_(self, timer):
         self._focus_prompt_area()
+    
+    # Helper called by timer after switching services
+    def _switchCompleteTimerFired_(self, timer):
+        self._focus_prompt_area()
+        self._hideSwitchIndicator()
+        self.switching_in_progress = False
+    
+    # Show visual indicator during service switching
+    @objc.python_method
+    def _showSwitchIndicator(self, message):
+        if self.switch_indicator:
+            self._hideSwitchIndicator()
+            
+        content_view = self.window.contentView()
+        content_bounds = content_view.bounds()
+        
+        # Create indicator background
+        indicator_width = 200
+        indicator_height = 50
+        indicator_x = (content_bounds.size.width - indicator_width) / 2
+        indicator_y = (content_bounds.size.height - indicator_height) / 2
+        
+        self.switch_indicator = NSView.alloc().initWithFrame_(
+            NSMakeRect(indicator_x, indicator_y, indicator_width, indicator_height)
+        )
+        self.switch_indicator.setWantsLayer_(True)
+        self.switch_indicator.layer().setBackgroundColor_(NSColor.colorWithWhite_alpha_(0.0, 0.8).CGColor())
+        self.switch_indicator.layer().setCornerRadius_(10)
+        
+        # Create label
+        label = NSTextField.alloc().initWithFrame_(NSMakeRect(10, 15, indicator_width - 20, 20))
+        label.setStringValue_(message)
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        label.setAlignment_(NSTextAlignmentCenter)
+        label.setFont_(NSFont.boldSystemFontOfSize_(14))
+        label.setTextColor_(NSColor.whiteColor())
+        
+        self.switch_indicator.addSubview_(label)
+        content_view.addSubview_(self.switch_indicator)
+        
+        # Animate appearance
+        self.switch_indicator.setAlphaValue_(0.0)
+        self.switch_indicator.animator().setAlphaValue_(1.0)
+    
+    # Hide visual indicator with animation
+    @objc.python_method  
+    def _hideSwitchIndicator(self):
+        if self.switch_indicator:
+            # Animate fade out then remove
+            def animation_group(context):
+                context.setDuration_(0.15)
+                self.switch_indicator.animator().setAlphaValue_(0.0)
+            
+            def completion_handler():
+                if self.switch_indicator and self.switch_indicator.superview():
+                    self.switch_indicator.removeFromSuperview()
+                self.switch_indicator = None
+            
+            NSAnimationContext.runAnimationGroup_completionHandler_(
+                animation_group,
+                completion_handler
+            )
+    
+    # Show notification to user
+    @objc.python_method
+    def _showNotification(self, title, message):
+        # Create notification view similar to switch indicator
+        content_view = self.window.contentView()
+        content_bounds = content_view.bounds()
+        
+        notification_width = 250
+        notification_height = 70
+        notification_x = content_bounds.size.width - notification_width - 20
+        notification_y = content_bounds.size.height - notification_height - 50
+        
+        notification_view = NSView.alloc().initWithFrame_(
+            NSMakeRect(notification_x, notification_y, notification_width, notification_height)
+        )
+        notification_view.setWantsLayer_(True)
+        notification_view.layer().setBackgroundColor_(NSColor.colorWithWhite_alpha_(0.1, 0.9).CGColor())
+        notification_view.layer().setCornerRadius_(8)
+        
+        # Title label
+        title_label = NSTextField.alloc().initWithFrame_(NSMakeRect(10, 40, notification_width - 20, 20))
+        title_label.setStringValue_(title)
+        title_label.setBezeled_(False)
+        title_label.setDrawsBackground_(False)
+        title_label.setEditable_(False)
+        title_label.setSelectable_(False)
+        title_label.setFont_(NSFont.boldSystemFontOfSize_(13))
+        title_label.setTextColor_(NSColor.labelColor())
+        
+        # Message label
+        message_label = NSTextField.alloc().initWithFrame_(NSMakeRect(10, 10, notification_width - 20, 25))
+        message_label.setStringValue_(message)
+        message_label.setBezeled_(False)
+        message_label.setDrawsBackground_(False)
+        message_label.setEditable_(False)
+        message_label.setSelectable_(False)
+        message_label.setFont_(NSFont.systemFontOfSize_(11))
+        message_label.setTextColor_(NSColor.secondaryLabelColor())
+        
+        notification_view.addSubview_(title_label)
+        notification_view.addSubview_(message_label)
+        content_view.addSubview_(notification_view)
+        
+        # Animate slide-in from right
+        original_x = notification_x
+        notification_view.setFrame_(NSMakeRect(content_bounds.size.width, notification_y, notification_width, notification_height))
+        notification_view.animator().setFrame_(NSMakeRect(original_x, notification_y, notification_width, notification_height))
+        
+        # Auto-dismiss after 3 seconds with slide-out animation
+        def dismiss_notification(timer):
+            if notification_view.superview():
+                NSAnimationContext.runAnimationGroup_completionHandler_(
+                    lambda context: (
+                        context.setDuration_(0.3),
+                        notification_view.animator().setFrame_(NSMakeRect(content_bounds.size.width, notification_y, notification_width, notification_height))
+                    ),
+                    lambda: notification_view.removeFromSuperview()
+                )
+        
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            3.0, self, '_dismissNotificationTimerFired:', notification_view, False)
+    
+    # Helper for notification auto-dismiss
+    def _dismissNotificationTimerFired_(self, timer):
+        notification_view = timer.userInfo()
+        if notification_view is None:
+            return
+            
+        content_bounds = self.window.contentView().bounds()
+        current_frame = notification_view.frame()
+        
+        if notification_view.superview():
+            def animation_group(context):
+                context.setDuration_(0.3)
+                notification_view.animator().setFrame_(NSMakeRect(content_bounds.size.width, current_frame.origin.y, current_frame.size.width, current_frame.size.height))
+            
+            def completion_handler():
+                if notification_view and notification_view.superview():
+                    notification_view.removeFromSuperview()
+            
+            NSAnimationContext.runAnimationGroup_completionHandler_(
+                animation_group,
+                completion_handler
+            )
 
-    # Python method to call JS that focuses the Gemini textarea / prompt
+    # Python method to call JS that focuses the active service's textarea / prompt with error handling
     @objc.python_method
     def _focus_prompt_area(self):
         js_focus = """
         (function(){
-          const selectors = [
-            '[aria-label="Enter a prompt here"]', // Gemini
-            '[data-placeholder="Ask Gemini"]', // Gemini
-            '[data-placeholder="Message Claude"]', // Claude
-            '[data-placeholder^="Send a message"]', // Claude (covers variations)
-            'textarea' // Generic fallback
-          ];
-          for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el) {
-              el.focus();
-              break;
+          try {
+            const selectors = [
+              '[aria-label="Enter a prompt here"]', // Gemini
+              '[data-placeholder="Ask Gemini"]', // Gemini
+              '[data-placeholder="Message Claude"]', // Claude
+              '[data-placeholder^="Send a message"]', // Claude (covers variations)
+              'textarea' // Generic fallback
+            ];
+            for (const sel of selectors) {
+              const el = document.querySelector(sel);
+              if (el) {
+                el.focus();
+                return 'success';
+              }
             }
+            return 'no_element_found';
+          } catch (error) {
+            return 'error: ' + error.message;
           }
         })();
         """
-        self.active_webview.evaluateJavaScript_completionHandler_(js_focus, None)
+        
+        def completion_handler(result, error):
+            if error:
+                print(f"JavaScript error in _focus_prompt_area: {error}")
+            elif result and result.startswith('error:'):
+                print(f"Focus script error: {result}")
+        
+        if self.active_webview:
+            self.active_webview.evaluateJavaScript_completionHandler_(js_focus, completion_handler)
