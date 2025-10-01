@@ -21,9 +21,11 @@ from .constants import (
     # WEBSITE,
     GEMINI_WEBSITE_URL,
     CLAUDE_WEBSITE_URL,
+    PERPLEXITY_WEBSITE_URL,
     DEFAULT_WEBSITE_URL,
     MENU_ITEM_SWITCH_TO_CLAUDE,
     MENU_ITEM_SWITCH_TO_GEMINI,
+    MENU_ITEM_SWITCH_TO_PERPLEXITY,
 )
 from .launcher import (
     install_startup,
@@ -138,6 +140,8 @@ class AppDelegate(NSObject):
     def active_webview(self):
         if self.current_service == "claude":
             return self.claude_webview
+        elif self.current_service == "perplexity":
+            return self.perplexity_webview
         else:
             return self.gemini_webview
 
@@ -148,6 +152,7 @@ class AppDelegate(NSObject):
         self.current_service = "gemini"
         self.switching_in_progress = False
         self.switch_indicator = None
+        self.webviews_loaded = {"gemini": False, "claude": False, "perplexity": False}
         # Create a borderless, floating, resizable window
         self.window = AppWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(500, 200, 970, 750),
@@ -174,17 +179,16 @@ class AppDelegate(NSObject):
 
         initial_webview_frame = ((0, 0), (content_view.bounds().size.width, content_view.bounds().size.height - DRAG_AREA_HEIGHT))
 
+        # Create all three webviews
         self.gemini_webview = self._create_configured_webview(initial_webview_frame)
         self.claude_webview = self._create_configured_webview(initial_webview_frame)
+        self.perplexity_webview = self._create_configured_webview(initial_webview_frame)
 
-        # Load initial content
+        # Load initial content only for Gemini (lazy loading for others)
         gemini_url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
         gemini_request = NSURLRequest.requestWithURL_(gemini_url)
         self.gemini_webview.loadRequest_(gemini_request)
-
-        claude_url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
-        claude_request = NSURLRequest.requestWithURL_(claude_url)
-        self.claude_webview.loadRequest_(claude_request)
+        self.webviews_loaded["gemini"] = True
 
         # Set up drag area (top sliver, full width)
         content_bounds = content_view.bounds()
@@ -211,16 +215,19 @@ class AppDelegate(NSObject):
         self.service_label.setTextColor_(NSColor.labelColor())
         self.drag_area.addSubview_(self.service_label)
 
-        # Add both webviews to the content view. Gemini is the default active service.
+        # Add all webviews to the content view. Gemini is the default active service.
         content_view.addSubview_(self.claude_webview)
+        content_view.addSubview_(self.perplexity_webview)
         content_view.addSubview_(self.gemini_webview) # Gemini starts as the active service
 
         self.claude_webview.setHidden_(True) # Claude starts hidden
+        self.perplexity_webview.setHidden_(True) # Perplexity starts hidden
 
         # Update the webview sizing and insert it below drag area.
         webview_frame = NSMakeRect(0, 0, content_bounds.size.width, content_bounds.size.height - DRAG_AREA_HEIGHT)
         self.gemini_webview.setFrame_(webview_frame)
         self.claude_webview.setFrame_(webview_frame)
+        self.perplexity_webview.setFrame_(webview_frame)
 
         # Create status bar item with logo
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSSquareStatusItemLength)
@@ -259,6 +266,11 @@ class AppDelegate(NSObject):
         self.switch_to_gemini_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(MENU_ITEM_SWITCH_TO_GEMINI, "switchToGemini:", "")
         self.switch_to_gemini_item.setTarget_(self)
         menu.addItem_(self.switch_to_gemini_item)
+
+        # Add switch to Perplexity menu item
+        self.switch_to_perplexity_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(MENU_ITEM_SWITCH_TO_PERPLEXITY, "switchToPerplexity:", "")
+        self.switch_to_perplexity_item.setTarget_(self)
+        menu.addItem_(self.switch_to_perplexity_item)
 
         clear_data_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Clear Web Cache", "clearWebViewData:", "")
         clear_data_item.setTarget_(self)
@@ -325,6 +337,8 @@ class AppDelegate(NSObject):
     def goToWebsite_(self, sender):
         if self.current_service == "claude":
             url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+        elif self.current_service == "perplexity":
+            url = NSURL.URLWithString_(PERPLEXITY_WEBSITE_URL)
         else:  # gemini
             url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
         request = NSURLRequest.requestWithURL_(url)
@@ -340,6 +354,13 @@ class AppDelegate(NSObject):
         try:
             self.current_service = "claude"
             
+            # Lazy load Claude if not yet loaded
+            if not self.webviews_loaded["claude"]:
+                claude_url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+                claude_request = NSURLRequest.requestWithURL_(claude_url)
+                self.claude_webview.loadRequest_(claude_request)
+                self.webviews_loaded["claude"] = True
+            
             # Animate the transition with cross-fade effect
             self.claude_webview.setAlphaValue_(0.0)
             self.claude_webview.setHidden_(False)
@@ -347,16 +368,20 @@ class AppDelegate(NSObject):
             # Ensure the Claude webview is brought to the front in the view hierarchy
             self.window.contentView().addSubview_positioned_relativeTo_(self.claude_webview, NSWindowAbove, self.gemini_webview)
             
-            # Animate fade-in for Claude and fade-out for Gemini
+            # Animate fade-in for Claude and fade-out for others
             def animation_group(context):
                 context.setDuration_(0.2)
                 self.claude_webview.animator().setAlphaValue_(1.0)
                 self.gemini_webview.animator().setAlphaValue_(0.0)
+                self.perplexity_webview.animator().setAlphaValue_(0.0)
             
             def completion_handler():
                 if self.gemini_webview:
                     self.gemini_webview.setHidden_(True)
                     self.gemini_webview.setAlphaValue_(1.0)  # Reset for next transition
+                if self.perplexity_webview:
+                    self.perplexity_webview.setHidden_(True)
+                    self.perplexity_webview.setAlphaValue_(1.0)  # Reset for next transition
             
             NSAnimationContext.runAnimationGroup_completionHandler_(
                 animation_group,
@@ -382,6 +407,13 @@ class AppDelegate(NSObject):
         try:
             self.current_service = "gemini"
             
+            # Lazy load Gemini if not yet loaded
+            if not self.webviews_loaded["gemini"]:
+                gemini_url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
+                gemini_request = NSURLRequest.requestWithURL_(gemini_url)
+                self.gemini_webview.loadRequest_(gemini_request)
+                self.webviews_loaded["gemini"] = True
+            
             # Animate the transition with cross-fade effect
             self.gemini_webview.setAlphaValue_(0.0)
             self.gemini_webview.setHidden_(False)
@@ -389,16 +421,20 @@ class AppDelegate(NSObject):
             # Ensure the Gemini webview is brought to the front
             self.window.contentView().addSubview_positioned_relativeTo_(self.gemini_webview, NSWindowAbove, self.claude_webview)
             
-            # Animate fade-in for Gemini and fade-out for Claude
+            # Animate fade-in for Gemini and fade-out for others
             def animation_group(context):
                 context.setDuration_(0.2)
                 self.gemini_webview.animator().setAlphaValue_(1.0)
                 self.claude_webview.animator().setAlphaValue_(0.0)
+                self.perplexity_webview.animator().setAlphaValue_(0.0)
             
             def completion_handler():
                 if self.claude_webview:
                     self.claude_webview.setHidden_(True)
                     self.claude_webview.setAlphaValue_(1.0)  # Reset for next transition
+                if self.perplexity_webview:
+                    self.perplexity_webview.setHidden_(True)
+                    self.perplexity_webview.setAlphaValue_(1.0)  # Reset for next transition
             
             NSAnimationContext.runAnimationGroup_completionHandler_(
                 animation_group,
@@ -414,14 +450,74 @@ class AppDelegate(NSObject):
             self._hideSwitchIndicator()
             self.switching_in_progress = False
 
+    def switchToPerplexity_(self, sender):
+        if self.switching_in_progress or self.current_service == "perplexity":
+            return
+        
+        self.switching_in_progress = True
+        self._showSwitchIndicator("Switching to Perplexity...")
+        
+        try:
+            self.current_service = "perplexity"
+            
+            # Lazy load Perplexity if not yet loaded
+            if not self.webviews_loaded["perplexity"]:
+                perplexity_url = NSURL.URLWithString_(PERPLEXITY_WEBSITE_URL)
+                perplexity_request = NSURLRequest.requestWithURL_(perplexity_url)
+                self.perplexity_webview.loadRequest_(perplexity_request)
+                self.webviews_loaded["perplexity"] = True
+            
+            # Animate the transition with cross-fade effect
+            self.perplexity_webview.setAlphaValue_(0.0)
+            self.perplexity_webview.setHidden_(False)
+            
+            # Ensure the Perplexity webview is brought to the front
+            self.window.contentView().addSubview_positioned_relativeTo_(self.perplexity_webview, NSWindowAbove, self.gemini_webview)
+            
+            # Animate fade-in for Perplexity and fade-out for others
+            def animation_group(context):
+                context.setDuration_(0.2)
+                self.perplexity_webview.animator().setAlphaValue_(1.0)
+                self.gemini_webview.animator().setAlphaValue_(0.0)
+                self.claude_webview.animator().setAlphaValue_(0.0)
+            
+            def completion_handler():
+                if self.gemini_webview:
+                    self.gemini_webview.setHidden_(True)
+                    self.gemini_webview.setAlphaValue_(1.0)  # Reset for next transition
+                if self.claude_webview:
+                    self.claude_webview.setHidden_(True)
+                    self.claude_webview.setAlphaValue_(1.0)  # Reset for next transition
+            
+            NSAnimationContext.runAnimationGroup_completionHandler_(
+                animation_group,
+                completion_handler
+            )
+            
+            self.updateSwitchMenuItemsState()
+            # Use timer for delayed focus to ensure webview is ready
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.3, self, '_switchCompleteTimerFired:', None, False)
+        except Exception as e:
+            print(f"Error switching to Perplexity: {e}")
+            self._hideSwitchIndicator()
+            self.switching_in_progress = False
+
     def updateSwitchMenuItemsState(self):
         if self.current_service == "claude":
             self.switch_to_claude_item.setEnabled_(False)
             self.switch_to_gemini_item.setEnabled_(True)
+            self.switch_to_perplexity_item.setEnabled_(True)
             self.service_label.setStringValue_("Claude")
+        elif self.current_service == "perplexity":
+            self.switch_to_claude_item.setEnabled_(True)
+            self.switch_to_gemini_item.setEnabled_(True)
+            self.switch_to_perplexity_item.setEnabled_(False)
+            self.service_label.setStringValue_("Perplexity")
         else:  # gemini
             self.switch_to_claude_item.setEnabled_(True)
             self.switch_to_gemini_item.setEnabled_(False)
+            self.switch_to_perplexity_item.setEnabled_(True)
             self.service_label.setStringValue_("Gemini")
 
     # Clear the webview cache data (in case cookies cause errors).
@@ -470,11 +566,13 @@ class AppDelegate(NSObject):
         key_control = modifiers & NSControlKeyMask
         key = event.charactersIgnoringModifiers()
 
-        # Option + C to switch services
+        # Option + C to switch services (cycle through all three)
         if key_alt and (not key_command) and (not key_control) and (not key_shift) and key.lower() == 'c':
             if self.current_service == "gemini":
                 self.switchToClaude_(None)
-            else:
+            elif self.current_service == "claude":
+                self.switchToPerplexity_(None)
+            else:  # perplexity
                 self.switchToGemini_(None)
             return # Consume the event
 
@@ -644,6 +742,7 @@ class AppDelegate(NSObject):
         webview_new_frame = NSMakeRect(0, 0, w, h - DRAG_AREA_HEIGHT)
         self.gemini_webview.setFrame_(webview_new_frame)
         self.claude_webview.setFrame_(webview_new_frame)
+        self.perplexity_webview.setFrame_(webview_new_frame)
 
     # Handler for setting the background color based on the web page background color.
     def userContentController_didReceiveScriptMessage_(self, userContentController, message):
@@ -702,6 +801,8 @@ class AppDelegate(NSObject):
         webview = timer.userInfo()
         if webview == self.claude_webview:
             url = NSURL.URLWithString_(CLAUDE_WEBSITE_URL)
+        elif webview == self.perplexity_webview:
+            url = NSURL.URLWithString_(PERPLEXITY_WEBSITE_URL)
         else:
             url = NSURL.URLWithString_(GEMINI_WEBSITE_URL)
         request = NSURLRequest.requestWithURL_(url)
@@ -873,6 +974,9 @@ class AppDelegate(NSObject):
               '[data-placeholder="Ask Gemini"]', // Gemini
               '[data-placeholder="Message Claude"]', // Claude
               '[data-placeholder^="Send a message"]', // Claude (covers variations)
+              '[placeholder="Ask anything..."]', // Perplexity
+              '[aria-label="Ask anything"]', // Perplexity
+              'textarea[placeholder*="Ask"]', // Generic Perplexity
               'textarea' // Generic fallback
             ];
             for (const sel of selectors) {
