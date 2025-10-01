@@ -10,6 +10,7 @@ from Quartz import (
 
 CLAUDE_WEBSITE_URL = "https://claude.ai"
 GEMINI_WEBSITE_URL = "https://gemini.google.com?referrer=macos-gemini-overlay"
+PERPLEXITY_WEBSITE_URL = "https://www.perplexity.ai"
 DEFAULT_WEBSITE_URL = GEMINI_WEBSITE_URL
 LOGO_WHITE_PATH = "logo/logo_white.png"
 LOGO_BLACK_PATH = "logo/logo_black.png"
@@ -21,6 +22,7 @@ DRAG_AREA_HEIGHT = 30
 STATUS_ITEM_CONTEXT = 1
 MENU_ITEM_SWITCH_TO_CLAUDE = "Switch to Claude"
 MENU_ITEM_SWITCH_TO_GEMINI = "Switch to Gemini"
+MENU_ITEM_SWITCH_TO_PERPLEXITY = "Switch to Perplexity"
 LAUNCHER_TRIGGER_MASK = (
     kCGEventFlagMaskShift |
     kCGEventFlagMaskControl |
